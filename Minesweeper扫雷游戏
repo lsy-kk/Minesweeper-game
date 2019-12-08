@@ -1,0 +1,564 @@
+#undef UNICODE
+#undef _UNICODE//取消 Unicode 编码的宏定义，让整个项目以 MBCS 编码编译
+#include<stdio.h>
+#include<time.h>
+#include<conio.h>
+#include<graphics.h>//图形库
+#include<string.h>
+#include<stdlib.h>
+#pragma comment(lib,"winmm.lib")//大概是一个关于音乐播放的库
+#define maxn 55
+#define siz 30//每个格子的尺寸
+int cnt, mark, now, n, m, boom;//cnt用于统计已经翻开的方格数，mark用于统计已经标记的地雷数，now用于统计标记正确的地雷数，add为菜单界面每个单元的高度，n、m、boom分别为地雷图的长宽和地雷数
+int lastx, lasty, first;//lastxy用于记录玩家踩雷的位置,first标记第一次按下地雷图
+long long timm, wti;//timm记录开始时间,wti记录玩家在菜单页花费的时间
+int muop = 1, leop = 1, hard = 1;//muop用于记录音乐开关,leop用于记录是否需要重开窗口,hard用于记录当前难度
+HWND h;//窗口的句柄
+struct landmine
+{
+	int mine;//记录该方块是否有地雷
+	int vis;//记录是否访问过该方块
+	int num;//记录周边方块的地雷数
+	int flag;//记录该位置是否被玩家标记为有地雷
+}e[maxn][maxn];
+struct rank
+{
+	char name[50];//玩家姓名
+	int pre, nxt;//from和to为双向链表，记录玩家排名顺序
+	long long t;//t为记录时间
+}p[3][12];//3种难度，每种难度取前10名
+int tail[3];//记录目前有前几名（最多前10）
+int dx[10] = { 1,-1,0,0,1,1,-1,-1 }, dy[10] = { 0,0,-1,1,-1,1,1,-1 };//八个方向的相应变量
+IMAGE img[20];//储存图片素材
+//以下部分为玩家游戏排名纪录的文件读入，文件输出和新数据插入（使用了链表）
+void readin()//从文件中读入玩家排名记录
+{
+	FILE* fp = fopen("rank.txt", "r");
+	if (fp == NULL) return;
+	int i, j;
+	memset(p, 0, sizeof(struct rank) * 3 * 12);//清空数组e
+	for (i = 0; i < 3; i++)
+	{
+		fscanf(fp, "%d", &tail[i]);
+		for (j = 0; j <= 10; j++) fscanf(fp, "%lld %s %d %d", &p[i][j].t, p[i][j].name, &p[i][j].pre, &p[i][j].nxt);
+	}
+	fclose(fp);
+}
+void writein()//文件输出保存玩家排名
+{
+	FILE* fp = fopen("rank.txt", "w");
+	if (fp == NULL) return;
+	int i, j;
+	for (i = 0; i < 3; i++)
+	{
+		fprintf(fp, "%d\n", tail[i]);
+		for (j = 0; j <= 10; j++) fprintf(fp, "%lld %s %d %d\n", p[i][j].t, p[i][j].name, p[i][j].pre, p[i][j].nxt);
+	}
+	fclose(fp);
+}
+void insertrank(int op, long long ti, char s[])//使用链表插入新的玩家记录
+{
+	int i, nw;
+	for (i = p[op][0].nxt; i != 0; i = p[op][i].nxt)//从1遍历至tail名，找到第一个比新玩家记录时间大的记录
+		if (ti < p[op][i].t) break;
+	if (tail[op] >= 10)
+	{
+		nw = p[op][0].pre;//这里将nw赋值为第10名的编号
+		strcpy(p[op][nw].name, s);//如果榜上有10名玩家，则将最后一名改为玩家新数据，倒数第二名nxt改为0，0的pre改为倒数第二
+		p[op][nw].t = ti;
+		p[op][nw].nxt = 0;
+		p[op][0].pre = p[op][nw].pre;
+
+	}
+	else
+	{
+		strcpy(p[op][++tail[op]].name, s);//如果榜上没有10名玩家，先直接记录玩家数据
+		p[op][tail[op]].t = ti;
+		nw = tail[op];//这里将nw赋值为tail[op]的编号
+	}
+	p[op][nw].nxt = i;
+	p[op][nw].pre = p[op][i].pre;
+	p[op][p[op][i].pre].nxt = nw;
+	p[op][i].pre = nw;//修改玩家前一名的nxt和后一名pre,保存玩家记录的pre和nxt
+}
+//菜单部分 开始
+void workranklevel(int op)//打印玩家排名
+{
+	MOUSEMSG msg = { 0 };
+	int i, j = 1, add = siz * (m + 1) / 10 - 1, big = add - 10;//add为涂鸦方框的高度，big为字体大小
+	char s[100];
+	cleardevice();//清空窗口
+	setfillcolor(CYAN);//设定填充使用的颜色
+	settextstyle(big, 0, "楷体");//设定使用的字体大小与类型
+	setbkmode(TRANSPARENT);//将字体背景设为透明（原来窗口的颜色）
+	for (i = p[op][0].nxt; i != 0 && j <= 10; i = p[op][i].nxt)//环形链表，0的nxt为第一名，0的pre为最后一名，nxt指向后一名
+	{
+		fillrectangle(0, add * (j - 1), siz * n, 5 + add * j);//涂鸦一个矩形
+		sprintf(s, "%d %lld  %s", j, p[op][i].t, p[op][i].name);//将字符串赋给s
+		outtextxy(5, add * (j - 1) + 5, s);//输出字符串
+		j++;//j用于记录现在是第几名
+	}
+	while (1)
+	{
+		msg = GetMouseMsg();
+		if (msg.uMsg == WM_LBUTTONDOWN) return;//按下鼠标左键退出该页
+	}
+}
+void workrank()//打印三种难度排名选择页面
+{
+	MOUSEMSG msg = { 0 };
+	int x, y, add = siz * (m + 1) / 5, big = add / 2, op;
+	cleardevice();
+	setfillcolor(CYAN);
+	settextstyle(big, 0, "楷体");
+	setbkmode(TRANSPARENT);
+	fillrectangle(siz, add, siz * (n - 1), add * 2);
+	fillrectangle(siz, add * 2, siz * (n - 1), add * 3);
+	fillrectangle(siz, add * 3, siz * (n - 1), add * 4);
+	outtextxy(siz, add, "低级模式");
+	outtextxy(siz, add * 2, "中级模式");
+	outtextxy(siz, add * 3, "高级模式");
+	while (1)
+	{
+		msg = GetMouseMsg();//读取鼠标指令
+		x = msg.x; y = msg.y;
+		if (msg.uMsg == WM_LBUTTONDOWN)
+		{
+			if (x > siz&& x < siz * (n - 1))
+			{
+				if (y > add&& y <= add * 2) op = 0;//低级模式
+				else if (y > add * 2 && y <= add * 3) op = 1;//中级模式
+				else if (y > add * 3 && y <= add * 4) op = 2;//高级模式
+				else return;
+				workranklevel(op);
+			}
+			return;
+		}
+	}
+	return;
+}
+void printmenu()//打印菜单页
+{
+	int add = siz * (m + 1) / 8, big = add / 2;
+	char s[20];
+	cleardevice();
+	setfillcolor(CYAN);//设置填充颜色为青色
+	fillrectangle(siz, add, siz * (n - 1), add * 2);//填充一个起始坐标为（siz,add），结束坐标为（siz*(n-1),add*2）的矩形
+	fillrectangle(siz, add * 2, siz * (n - 1), add * 3);
+	fillrectangle(siz, add * 3, siz * (n - 1), add * 4);
+	fillrectangle(siz, add * 4, siz * (n - 1), add * 5);
+	fillrectangle(siz, add * 5, siz * (n - 1), add * 6);
+	fillrectangle(siz, add * 6, siz * (n - 1), add * 7);
+	settextstyle(big, 0, "楷体");//设置字体大小与样式
+	setbkmode(TRANSPARENT);//去除输出文字的背景颜色（原来窗口的颜色）
+	outtextxy(siz, add, "继续游戏");//从起始坐标开始，输出“菜单”二字
+	outtextxy(siz, add * 2, "开始新游戏");
+	outtextxy(siz, add * 3, "游戏难度");
+	if (muop == 1) sprintf(s, "音乐开关（开）");//将"..."中字符读入s中
+	else sprintf(s, "音乐开关（关）");
+	outtextxy(siz, add * 4, s);
+	outtextxy(siz, add * 5, "玩家排名");
+	outtextxy(siz, add * 6, "关于游戏");
+}
+int selfoption()//自定义难度选项的页面，弹出输入框并读入玩家输入
+{
+	char s[100];
+	int a = 0, b = 0, c = 0;
+	InputBox(s, 100, "请按顺序输入你想要的扫雷图的宽度(n)、高度(m)和总雷数(5<=宽<=50,5<=高<=28，0<雷数<n*m)");//弹出一个输入提示框
+	sscanf(s, "%d%d%d", &a, &b, &c);//将读入缓冲区字符转化为整形
+	if (a < 5 || b < 5 || c < 0 || a>50 || b>30 || a * b <= c || c<1)//特判数据是否符合条件
+	{
+		MessageBox(h, "不合法的输入!!", "提示", MB_OK);
+		return 0;
+	}
+	n = a; m = b; boom = c;
+	MessageBox(h, "修改完成!!", "提示", MB_OK);//弹出一个提示框
+	leop = 1;//下一次打开一个新窗口（因为窗口大小可能有变化）
+	return 1;
+}
+int worklevel()//输出不同游戏难度的选项和当前的游戏难度，接着处理玩家的鼠标输入信息，更改游戏模式
+{
+	MOUSEMSG msg = { 0 };
+	int x, y, add = siz * (m + 1) / 7, big = add / 2, op;
+	char s[30];
+	cleardevice();
+	setfillcolor(CYAN);
+	fillrectangle(siz, add, siz * (n - 1), add * 2);
+	fillrectangle(siz, add * 2, siz * (n - 1), add * 3);
+	fillrectangle(siz, add * 3, siz * (n - 1), add * 4);
+	fillrectangle(siz, add * 4, siz * (n - 1), add * 5);
+	settextstyle(big, 0, "楷体");
+	setbkmode(TRANSPARENT);
+	outtextxy(siz, add, "低级 9*9 10个雷");
+	outtextxy(siz, add * 2, "中级16*16 40个雷");
+	outtextxy(siz, add * 3, "高级 30 *16 99个雷");
+	outtextxy(siz, add * 4, "自定义");
+	if (hard == 1) sprintf(s, "目前为 低级模式");
+	else if (hard == 2) sprintf(s, "目前为 中级模式");
+	else if (hard == 3) sprintf(s, "目前为 高级模式");
+	else if (hard == 4) sprintf(s, "目前为 自定义模式");
+	outtextxy(siz, add * 5, s);//打印难度选择页面
+	while (1)
+	{
+		msg = GetMouseMsg();//读取鼠标指令
+		x = msg.x; y = msg.y; op = 0;
+		if (msg.uMsg == WM_LBUTTONDOWN)
+		{
+			if (x > siz&& x < siz * (n - 1))
+			{
+				if (y > add&& y <= add * 2)//低级模式
+				{
+					op = 1; n = 9; m = 9; boom = 10;
+				}
+				else if (y > add * 2 && y <= add * 3)//中级模式
+				{
+					op = 2; n = 16; m = 16; boom = 40;
+				}
+				else if (y > add * 3 && y <= add * 4)//高级模式
+				{
+					op = 3; n = 30; m = 16; boom = 99;
+				}
+				else if (y > add * 4 && y <= add * 5)
+				{
+					if (selfoption() == 1)//自定义模式
+					{
+						hard = 4;
+						return 1;
+					}
+					else return 0;
+				}
+			}
+			if (op == 0) return 0;//如果左键点击背景区域则直接返回
+			if (hard == op)
+			{
+				MessageBox(h, "选择模式已为当前模式", "提示", MB_OK);
+				return 0;
+			}
+			leop = 1;
+			hard = op;
+			MessageBox(h, "设置成功", "提示", MB_OK);
+			return 1;
+		}
+	}
+	return 1;
+}
+void aboutgame()//输出一些关于游戏的信息，对应菜单中的“关于游戏”
+{
+	int add = siz * (m + 1) / 7, big = add / 3;
+	cleardevice();
+	setfillcolor(CYAN);
+	fillrectangle(0, 0, siz * n, siz * (m + 1));
+	settextstyle(big, 0, "楷体");
+	setbkmode(TRANSPARENT);
+	outtextxy(siz, 0, "本游戏由lsy_kk制作");
+	outtextxy(siz, add, "图片与音乐素材均来自网络");
+	outtextxy(siz, add * 2, "Carentan:Fire on Lake");
+	outtextxy(siz, add * 3, "- Michael Kamen");
+	outtextxy(siz, add * 4, "Childhood Memories");
+	outtextxy(siz, add * 5, "My Imaginary Friend");
+	outtextxy(siz, add * 6, "- Hans Zimmer/Lorne Balfe");
+	MOUSEMSG msg = { 0 };
+	while (1)
+	{
+		msg = GetMouseMsg();
+		if (msg.uMsg == WM_LBUTTONDOWN) return;//当玩家点击鼠标左键，自动退出
+	}
+}
+int workmenu()//处理菜单栏各种功能，处理玩家对菜单栏的输入
+{
+	MOUSEMSG msg = { 0 };
+	int x, y, add = siz * (m + 1) / 8;
+	printmenu();
+	while (1)
+	{
+		msg = GetMouseMsg();//读取鼠标指令
+		x = msg.x;
+		y = msg.y;
+		if (msg.uMsg == WM_LBUTTONDOWN)
+		{
+			if (x<siz || x>siz* (n-1) || y<add || y>add * 7) continue;//并没有按到菜单中的选项，直接回到游戏界面
+			else
+			{
+				if (y > add&& y <= add * 2) return 0;//继续游戏
+				else if (y > add * 2 && y <= add * 3) return 2;//开始新游戏
+				else if (y > add * 3 && y <= add * 4)//自定义游戏
+				{
+					if (worklevel() == 1) return 2;//若难度改动有效，则开始新游戏
+				}
+				else if (y > add * 4 && y <= add * 5)//音乐开关
+				{
+					if (muop == 1) mciSendString("pause bgm.mp3", NULL, 0, NULL);//关音乐（其实是暂停音乐
+					else mciSendString("resume bgm.mp3", NULL, 0, NULL);//开音乐（其实是继续播放音乐
+					muop = 1 - muop;//改变音乐开关标记
+				}
+				else if (y > add * 5 && y <= add * 6) workrank();//玩家排名
+				else if (y > add * 6 && y <= add * 7) aboutgame();//关于游戏
+			}
+			printmenu();
+		}
+	}
+	return 0;
+}
+//菜单部分 结束
+//地雷图的初始化和两种输出部分 开始
+void make_the_map()//初始化游戏地雷图
+{
+	memset(e, 0, sizeof(struct landmine) * maxn * maxn);//清空数组e
+	int i, j, x, y;
+	srand((int)time(0));//随机数种子
+	for (i = 1; i <= boom; i++)//开始随机生成地雷位置
+	{
+		x = rand() % n + 1;
+		y = rand() % m + 1;
+		if (e[x][y].mine == 1)//遇到已经有雷的格子就跳过
+		{
+			i--; continue;
+		}
+		e[x][y].mine = 1;
+		for (j = 0; j < 8; j++)//八个方向
+		{
+			if (x + dx[j] > n || x + dx[j]<1 || y + dy[j]>m || y + dy[j] < 1) continue;//超出边界就跳过
+			e[x + dx[j]][y + dy[j]].num++;//周边的地雷数num均加一
+		}
+	}
+}
+void print()//打印当前玩家解出的地雷图及游戏界面边框的菜单字样和剩余地雷数
+{
+	int i, j, tmp = siz / 5;
+	char s[20];
+	setfillcolor(CYAN);
+	fillrectangle(0, 0, siz * 2, siz);
+	fillrectangle(siz * 2, 0, siz * (n + 1), siz);
+	settextstyle(15, 0, "楷体");
+	setbkmode(TRANSPARENT);
+	outtextxy(tmp, tmp, "菜单");
+	sprintf(s, "剩余地雷 = %d", mark);//为了输出变量，把含变量的句子转化为字符串
+	outtextxy(siz * 2 + tmp, tmp, s);
+	for (i = 1; i <= n; i++)
+	{
+		for (j = 1; j <= m; j++)
+		{
+			if (e[i][j].vis == 0)
+			{
+				if (e[i][j].flag == 2) putimage((i - 1) * siz, j * siz, &img[13]);//输出地雷标记小问号
+				else putimage((i - 1) * siz, j * siz, &img[14]);//输出空格子（未翻开）
+			}
+			else
+			{
+				if (e[i][j].flag == 1) putimage((i - 1) * siz, j * siz, &img[12]);//输出地雷标记小旗子	 
+				else putimage((i - 1) * siz, j * siz, &img[e[i][j].num]);//输出数字1-8和空白格（即0）
+			}
+		}
+	}
+}
+void finalmap()//打印最后的地雷图
+{
+	int i, j;
+	for (i = 1; i <= n; i++)
+	{
+		for (j = 1; j <= m; j++)
+		{
+			if (e[i][j].mine == 0)
+			{
+
+				if (e[i][j].vis == 0)
+				{
+					if (e[i][j].flag == 2) putimage((i - 1) * siz, j * siz, &img[13]);//问号
+					else putimage((i - 1) * siz, j * siz, &img[14]);//空白格
+				}
+				else
+				{
+					if (e[i][j].flag == 1) putimage((i - 1) * siz, j * siz, &img[11]);//玩家标记错误的雷
+					else putimage((i - 1) * siz, j * siz, &img[e[i][j].num]);
+				}
+			}
+			else
+			{
+				if (i == lastx && j == lasty) putimage((i - 1) * siz, j * siz, &img[10]);//踩到的雷
+				else if (e[i][j].flag == 1)putimage((i - 1) * siz, j * siz, &img[12]);//玩家标记正确的雷
+				else putimage((i - 1) * siz, j * siz, &img[9]);//没踩到也没标记的雷
+			}
+		}
+	}
+}
+//地雷图制造与输出部分 结束
+//游戏操作部分 开始
+void dfs(int x, int y)//深搜，访问玩家所选方块周围a数组为 0的所有相邻方块直至边界
+{
+	if (e[x][y].vis == 1 || e[x][y].mine == 1 || e[x][y].flag == 1 || x<1 || x>n || y<1 || y>m) return;//遇到边界、标记地雷则返回
+	cnt++; e[x][y].vis = 1;
+	if (e[x][y].num != 0) return;
+	int i;
+	for (i = 0; i < 8; i++) dfs(x + dx[i], y + dy[i]);
+}
+int input()//在游戏主界面（地雷图界面），读入鼠标输入的指令并执行该指令
+{
+	MOUSEMSG msg = { 0 };
+	int x, y, re;
+	long long tmp;
+	print();
+	while (1)//一直读取鼠标指令直至游戏结束
+	{
+		msg = GetMouseMsg();//读取鼠标指令
+		x = msg.x / siz + 1;
+		y = msg.y / siz;
+		if (x < 1 || x > n || y < 1 || y > m)
+		{
+			if (msg.uMsg == WM_LBUTTONDOWN && msg.x <= siz * 2 && msg.y <= siz && msg.x > 0 && msg.y > 0)//进入菜单栏
+			{
+				if (first == 1) tmp = time(0);//如果玩家已经开始游戏（即已经摁下游戏界面方块），记录进入菜单页的时间
+				re = workmenu();
+				if (first == 1) wti = wti - tmp + time(0);//如果玩家已经开始游戏，记入此次进入菜单页花费的时间
+				if (re == 2) return 2;//如果需要重新开启窗口（游戏模式改变）或开始新游戏则返回2
+				print();
+			}
+		}
+		else
+		{
+			if (msg.uMsg == WM_LBUTTONDOWN)
+			{
+				if (first == 0)//按下方块意味着游戏开始计时
+				{
+					first = 1;
+					timm = time(0);
+				}
+				if (e[x][y].mine == 1 && e[x][y].flag != 1)
+				{
+					lastx = x; lasty = y;
+					return 0;//结束游戏
+				}
+				if (e[x][y].vis == 0)
+				{
+					if (e[x][y].vis)//防止每次dfs操作中边界上的块被记录两次
+					{
+						e[x][y].vis = 0;
+						cnt--;
+					}
+					dfs(x, y);
+				}
+				print();
+			}
+			else if (msg.uMsg == WM_RBUTTONDOWN)
+			{
+				if (e[x][y].vis == 0 || e[x][y].flag > 0)
+				{
+					if (e[x][y].flag == 0)
+					{
+						e[x][y].vis = 1;
+						e[x][y].flag = 1;
+						mark--;
+						cnt++;
+						if (e[x][y].mine == 1) now++;
+					}
+					else if (e[x][y].flag == 1)
+					{
+						e[x][y].vis = 0;
+						e[x][y].flag = 2;
+						mark++;
+						cnt--;
+						if (e[x][y].mine == 1) now--;
+					}
+					else e[x][y].flag = 0;//改变该方块上的标记（无标记0，旗子1，问号2）
+				}
+				print();
+			}
+		}
+		if (cnt == n * m || n * m - cnt == boom - now || now == boom) return 1;
+	}
+	return 1;
+}
+int main()
+{
+	int re = 0, r;
+	char s[100], name[100];
+	n = 9; m = 9; boom = 10;
+	readin();
+	loadimage(&img[0], "0.jpg", siz, siz);//读入文件中的素材图片
+	loadimage(&img[1], "1.jpg", siz, siz);
+	loadimage(&img[2], "2.jpg", siz, siz);
+	loadimage(&img[3], "3.jpg", siz, siz);
+	loadimage(&img[4], "4.jpg", siz, siz);
+	loadimage(&img[5], "5.jpg", siz, siz);
+	loadimage(&img[6], "6.jpg", siz, siz);
+	loadimage(&img[7], "7.jpg", siz, siz);
+	loadimage(&img[8], "8.jpg", siz, siz);
+	loadimage(&img[9], "bomb.jpg", siz, siz);
+	loadimage(&img[10], "bomb2.jpg", siz, siz);
+	loadimage(&img[11], "bomb3.jpg", siz, siz);
+	loadimage(&img[12], "flag.jpg", siz, siz);
+	loadimage(&img[13], "flag2.jpg", siz, siz);
+	loadimage(&img[14], "box.jpg", siz, siz);
+	mciSendString("open bgm.mp3", NULL, 0, NULL);//音乐的小问题，我也不知道为什么加上这三个语句就好了
+	mciSendString("play bgm.mp3 repeat", NULL, 0, NULL);
+	mciSendString("close bgm.mp3", NULL, 0, NULL);
+	while (1)//一次循环一次游戏
+	{
+		mark = boom; now = 0; cnt = 0;
+		lastx = 0; lasty = 0;
+		first = 0; wti = 0;
+		if (muop == 1)
+		{
+			mciSendString("open bgm.mp3", NULL, 0, NULL);//打开主题音乐
+			mciSendString("play bgm.mp3 repeat", NULL, 0, NULL);//循环播放主题音乐
+		}
+		if (leop == 1)//标记是否需要重开窗口（改变游戏模式后和第一次游戏）
+		{
+			leop = 0;
+			h = initgraph(siz * n, siz * (m + 1));//创建一个图形窗口
+			setbkcolor(BLACK);//设置窗口背景颜色
+			cleardevice();//刷新图形窗口
+		}
+		make_the_map();
+		re = input();//re标记输0\赢1和开始新游戏2
+		if (muop == 1) mciSendString("close bgm.mp3", NULL, 0, NULL);//关闭主题音乐
+		if (re == 0)
+		{
+			finalmap();//输出游戏最后的地图
+			if (muop == 1)
+			{
+				mciSendString("open ohno.mp3", NULL, 0, NULL);//打开游戏失败的音乐
+				mciSendString("play ohno.mp3 repeat", NULL, 0, NULL);
+			}
+			r = MessageBox(h, "你输了！想要再来一局吗？", "OHNO!!!", MB_YESNO);//提示用户的信息框
+			if (muop == 1) mciSendString("close ohno.mp3", NULL, 0, NULL);
+			if (r == IDNO)
+			{
+				closegraph();//关闭窗口
+                return 0;//如果不想再来一局就退出程序
+			}
+		}
+		else if (re == 1)
+		{
+			finalmap();
+			if (muop == 1)
+			{
+				mciSendString("open win.mp3", NULL, 0, NULL);//打开游戏胜利的音乐
+				mciSendString("play win.mp3 repeat", NULL, 0, NULL);
+			}
+			timm = time(0) - timm - wti;
+			if (hard!=4 && (timm < p[hard - 1][p[hard - 1][0].pre].t || tail[hard - 1] == 0))
+			{
+				sprintf(s, "你赢了！真是太强了！用时:%lld秒,进入了前十榜！ orz 请留下您的大名吧(不要超过20字)", timm);
+				InputBox(name, 50, s);//弹出输入框提示玩家输入名字
+				while (strlen(name) > 20)//判断玩家输入的姓名长度，如果超长就重新输入，直到长度合法
+					InputBox(name, 50, "哎呀，名字太长啦，重新输入您的大名吧！");
+				while (strlen(name) < 1)//同样，处理太短的情况
+					InputBox(name, 50, "哎呀，名字太短啦，重新输入您的大名吧！");
+				insertrank(hard - 1, timm, name);
+				writein();//保存最新排名
+				sprintf(s, "想要再来一局吗？");
+			}
+			else sprintf(s, "你赢了！真是太强了！用时:%lld秒,想要再来一局吗？", timm);
+			r = MessageBox(h, s, "WIN!!", MB_YESNO);
+			if (muop == 1) mciSendString("close win.mp3", NULL, 0, NULL);
+			if (r == IDNO)
+			{
+				closegraph();//关闭窗口
+				return 0;
+			}
+		}
+		//re==2时不作任何操作直接进入下一次循环
+	}
+	closegraph();//关闭窗口
+	return 0;
+}
